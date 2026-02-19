@@ -1,187 +1,94 @@
 # ⚡ CodeReviewer
 
-> Revisión automática de código React con IA, integrada en tu flujo de git.
-
-Aplica las **57 reglas de producción de Vercel** ([agent-skills](https://github.com/vercel-labs/agent-skills)) y un **health score propio** directamente desde tu editor — Claude Code, Cursor o Codex — sin depender de herramientas externas.
-
-Compatible con **Claude Code**, **Cursor** y **Codex CLI**.
+Toolkit de revision de codigo React para equipos. Combina deteccion gratuita en cada commit con revision profunda bajo demanda via AI.
 
 ---
 
-## ¿Qué hace?
-
-Cuando haces un commit (o un push, o lo que configures), el toolkit:
-
-1. Detecta los archivos `.tsx`/`.ts` modificados
-2. Los envía a Claude con las reglas de Vercel para detectar violaciones
-3. Claude evalúa también un health score (0-100) del código analizado
-4. Actúa según tu configuración: bloquea, avisa, o pregunta
+## Arquitectura
 
 ```
-git commit -m "feat: nueva pantalla de usuario"
+git commit
+    ├── [1] Deteccion estatica (grep, 0 tokens, instantaneo)
+    │         async-parallel · barrel-imports
+    ├── [2] React Doctor (npx, 0 tokens, ~3s)
+    │         score 0-100 · warnings detallados
+    └── Si hay issues → sugiere: npm run review
 
-┌──────────────────────────────────────────────────┐
-│  ⚡ Claude React Toolkit — Pre-commit Review     │
-└──────────────────────────────────────────────────┘
-  Analizando 3 archivo(s) React...
+npm run review  (cuando el usuario lo decide)
+    ├── [1] React Doctor completo
+    ├── [2] Vercel React Rules via Claude
+    │         Solo archivos del diff · max 10 archivos
+    │         Reglas embebidas · sin WebFetch extra
+    └── Ofrece aplicar fixes con el editor detectado
 
-  [1/2] Vercel React Review
-      [CRITICAL] src/hooks/useUserData.ts:23
-        Regla:    async-parallel
-        Problema: fetchUser y fetchPosts se ejecutan secuencialmente
-        Fix:      Envolver en Promise.all([fetchUser(id), fetchPosts(id)])
-
-  Health: 64/100
-    → Missing dependency in useEffect at UserList.tsx:88
-    → Prop drilling 4 levels deep for currentUser
-
-┌──────────────────────────────────────────────────┐
-│  Resultado: BLOQUEADO — Corrige los CRITICALs   │
-└──────────────────────────────────────────────────┘
-  ¿Quieres que Claude aplique los fixes automáticamente? [s/N]:
+Cursor (siempre gratis):
+    └── .mdc rules → reglas CRITICAL/HIGH/MEDIUM inline
+        Cursor las aplica mientras editas, sin API calls
 ```
+
+**Principio clave**: el hook nunca llama a la API de Claude. Los tokens se usan solo cuando el desarrollador decide hacer la revision completa.
 
 ---
 
-## Instalación
-
-### Opción A — Como submódulo en tu proyecto (recomendado para equipos)
+## Instalacion
 
 ```bash
-# Añadir el toolkit a tu proyecto React
-git submodule add https://github.com/diego-beai/CodeReviewer.git .claude-toolkit
-
-# Ejecutar el wizard de instalación
-cd .claude-toolkit && ./install.sh
+# En el directorio del proyecto React
+git clone https://github.com/diego-beai/CodeReviewer.git ~/claude-react-toolkit
+cd tu-proyecto-react
+bash ~/claude-react-toolkit/install.sh
 ```
 
-El wizard te pregunta exactamente cómo quieres que funcione (ver [Configuración](#configuración)) y guarda tus preferencias en `.claude-toolkit.config.json`.
-
-### Opción B — Instalación global en tu máquina
+### Opciones de install.sh
 
 ```bash
-git clone https://github.com/diego-beai/CodeReviewer.git ~/CodeReviewer
-
-# Luego, en cada proyecto React donde quieras el toolkit:
-~/CodeReviewer/install.sh
-```
-
-### Opción C — Instalación rápida con defaults
-
-```bash
-./install.sh --quick
-```
-
-Instala con la configuración recomendada sin hacer preguntas.
-
----
-
-## El Wizard de Configuración
-
-Al ejecutar `./install.sh`, el wizard interactivo te guía por estas opciones:
-
-### ¿Cuándo revisar?
-
-| Opción | Descripción |
-|---|---|
-| **Pre-commit** | Revisa solo los archivos en staging. Rápido, feedback inmediato. |
-| **Pre-push** | Revisa todos los cambios desde el último push. Menos interrupciones. |
-| **Ambos** | Máxima cobertura. |
-| **Solo manual** | Tú decides cuándo con `npm run review`. |
-
-### ¿Qué hacer al encontrar CRITICALs?
-
-| Opción | Descripción |
-|---|---|
-| **Bloquear** | El commit no puede continuar hasta corregirlo (o `--no-verify`). |
-| **Avisar** | Muestra el problema, guarda el reporte, deja pasar. |
-| **Preguntar** | Te pregunta en cada caso si quieres bloquear o continuar. |
-
-### ¿Qué severidades reportar?
-
-| Nivel | Qué incluye |
-|---|---|
-| Solo CRITICAL | Problemas que rompen performance en producción. |
-| CRITICAL + HIGH | + Problemas de arquitectura importantes. *(recomendado)* |
-| + MEDIUM | + Oportunidades de optimización de renders. |
-| Todos | + Sugerencias de mejora menores. |
-
-### ¿Aplicar fixes automáticamente?
-
-| Modo | Descripción |
-|---|---|
-| **Preguntar** | Muestra el fix propuesto y espera confirmación. *(recomendado)* |
-| **Auto** | Aplica fixes de alta confianza sin preguntar. |
-| **Solo reportar** | Solo informa, tú decides qué cambiar. |
-
-### Score mínimo de React Doctor
-
-Configura el umbral de score (0-100) por debajo del cual se bloquea el commit. Por defecto: 50.
-
----
-
-## Uso manual
-
-Una vez instalado, puedes lanzar la revisión en cualquier momento:
-
-```bash
-npm run review           # Revisión completa con Claude (reglas + health score)
-npm run review:vercel    # Solo las 57 reglas de Vercel
-npm run review:config    # Abrir el wizard para reconfigurar
-```
-
-Para saltar la revisión puntualmente sin desinstalarlo:
-```bash
-git commit --no-verify -m "wip: trabajo en progreso"
+bash install.sh           # Instalacion interactiva completa
+bash install.sh --quick   # Valores por defecto (pre-commit, block on CRITICAL)
+bash install.sh --update-config  # Solo actualiza la configuracion
+bash install.sh --uninstall      # Elimina hooks y configuracion
 ```
 
 ---
 
-## Compatibilidad con editores
-
-### Claude Code
-
-El toolkit instala el skill `vercel-react-review` en `~/.claude/skills/` para revisiones interactivas con Claude:
-
-```
-/vercel-react-review
-```
-
-Claude descarga las reglas actualizadas de Vercel, revisa tu código, muestra una tabla de hallazgos y ofrece aplicar los fixes con explicaciones.
-
-También actualiza el agent `code-reviewer` para que incluya automáticamente el análisis React cuando trabaje con proyectos `.tsx`/`.ts`.
-
-### Cursor
-
-Las reglas se instalan en `.cursor/rules/` y se aplican automáticamente al editar archivos `.tsx`/`.ts`:
-
-- `vercel-react-review.mdc` — 57 reglas de performance React
-- `react-doctor-check.mdc` — recordatorio de ejecutar react-doctor
-
-### Codex CLI
-
-Las instrucciones se instalan como `AGENTS.md` en la raíz del proyecto. Codex las lee automáticamente al ejecutarse.
-
----
-
-## GitHub Actions
-
-Para revisión automática en cada PR, copia la Action a tu proyecto:
+## Uso diario
 
 ```bash
-mkdir -p .github/workflows
-cp .claude-toolkit/github-action/claude-review.yml .github/workflows/
+# Revision completa (Doctor + Vercel Rules)
+npm run review
+
+# Solo React Doctor (rapido, gratis)
+npm run review:doctor
+
+# Solo Vercel Rules (Claude)
+npm run review:vercel
+
+# Ver/editar configuracion actual
+npm run review:config
 ```
-
-Luego añade tu `ANTHROPIC_API_KEY` en **Settings → Secrets and variables → Actions**.
-
-Cada PR recibirá automáticamente un comentario con el análisis completo.
 
 ---
 
-## Configuración manual
+## Herramientas instaladas
 
-La configuración se guarda en `.claude-toolkit.config.json` en la raíz de tu proyecto. Puedes editarlo directamente:
+### Para Claude Code
+- **Skill `/vercel-react-review`** — revision bajo demanda en Claude Code
+- **Agent `code-reviewer`** — revision completa incluyendo analisis React
+
+### Para Cursor
+- **`.cursor/rules/vercel-react-review.mdc`** — reglas CRITICAL/HIGH aplicadas inline
+- **`.cursor/rules/react-health-check.mdc`** — reglas de salud del codebase
+
+### Para Codex CLI
+- **`AGENTS.md`** en el root del proyecto — leido automaticamente por Codex
+
+### Para todos (git hooks)
+- **`.git/hooks/pre-commit`** o **`pre-push`** — segun configuracion
+
+---
+
+## Configuracion
+
+Archivo: `.claude-toolkit.config.json` en el root del proyecto.
 
 ```json
 {
@@ -192,113 +99,142 @@ La configuración se guarda en `.claude-toolkit.config.json` en la raíz de tu p
     "doctor_score_threshold": 50
   },
   "reporting": {
-    "level": "critical_high"
+    "level": "critical_high",
+    "save_report": true,
+    "report_dir": ".claude-review"
   },
   "auto_fix": {
     "mode": "ask"
   },
   "tools": {
-    "vercel_review": true,
     "react_doctor": true
-  },
-  "editors": {
-    "claude_code": true,
-    "cursor": false,
-    "codex": false
   }
 }
 ```
 
-Para reconfigurar con el wizard: `npm run review:config`
+### Opciones de `trigger`
+- `pre-commit` — el hook corre al hacer commit (recomendado)
+- `pre-push` — el hook corre al hacer push
+- `manual` — no instala hooks; solo usa `npm run review`
+
+### Opciones de `on_critical_action`
+- `block` — bloquea el commit si hay CRITICAL (recomendado)
+- `warn` — muestra warning pero permite el commit
+- `ask` — pregunta al desarrollador si continuar
 
 ---
 
-## Reglas que se aplican
+## Reglas aplicadas
 
-Las reglas se descargan en tiempo real desde [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills), siempre actualizadas.
+### CRITICAL (bloquean el commit por defecto)
+| Regla | Descripcion |
+|---|---|
+| `async-parallel` | Awaits secuenciales sin dependencia de datos → usar `Promise.all` |
+| `bundle-barrel-imports` | Imports desde `index.ts` que inflan el bundle → importar directamente |
 
-### CRITICAL — Bloquean el commit por defecto
+### HIGH (warnings, no bloquean)
+| Regla | Descripcion |
+|---|---|
+| `architecture-avoid-boolean-props` | 3+ props booleanas como modos → usar `variant` union type |
+| `architecture-compound-components` | Componentes monoliticos → patron compound components |
 
-| Regla | Problema | Fix |
-|---|---|---|
-| `async-parallel` | Múltiples `await` secuenciales sin dependencia | `Promise.all([...])` |
-| `bundle-barrel-imports` | Imports desde `index.ts` inflando el bundle | Import directo desde el archivo |
+### MEDIUM (sugerencias de mejora)
+| Regla | Descripcion |
+|---|---|
+| `rerender-derived-state-no-effect` | Estado derivado en useEffect → calcular en render |
+| `rerender-memo` | Componente puro sin React.memo → envolver para evitar re-renders |
+| `rerender-stable-callbacks` | Arrow functions inline como props → useCallback |
 
-### HIGH — Advierten, permiten continuar
-
-| Regla | Problema | Fix |
-|---|---|---|
-| `architecture-avoid-boolean-props` | 3+ props booleanas en el mismo componente | Prop `variant` con union type |
-| `architecture-compound-components` | Componente monolítico con múltiples concerns | Compound components pattern |
-
-### MEDIUM — Oportunidades de mejora
-
-| Regla | Problema | Fix |
-|---|---|---|
-| `rerender-derived-state-no-effect` | `useEffect + setState` para valores derivados | Calcular en el render |
-| `rerender-memo` | Componente puro que se re-renderiza sin cambios | `React.memo()` |
-| `rerender-stable-callbacks` | Callbacks inline que causan re-renders en hijos | `useCallback` |
-
-Para las 57 reglas completas → [vercel-labs/agent-skills/react-best-practices](https://github.com/vercel-labs/agent-skills/tree/main/skills/react-best-practices)
-
----
-
-## Prerequisitos
-
-| Herramienta | Para qué | Instalar |
-|---|---|---|
-| [Claude Code CLI](https://claude.ai/code) | Análisis con IA, auto-fix | `npm install -g @anthropic-ai/claude-code` |
-| Python 3 | Parsear resultados en hooks | Preinstalado en macOS/Linux |
+### Salud del codebase (React Doctor + Vercel Health)
+- Rules of hooks (sin condicionales/loops)
+- Estado minimo y no redundante
+- Dependencias de useEffect correctas
+- Type safety (sin `any`)
+- Tamano de componentes
+- Prop drilling excesivo
 
 ---
 
-## Estructura del repositorio
+## Como funciona la revision Vercel
 
-```
-CodeReviewer/
-├── install.sh                          ← Wizard de instalación interactivo
-├── config/
-│   └── defaults.json                   ← Valores por defecto
-├── skills/
-│   └── vercel-react-review/
-│       ├── SKILL.md                    ← Skill para Claude Code
-│       └── AGENTS.md                   ← Versión compacta para agentes
-├── agents/
-│   └── code-reviewer.md                ← code-reviewer con análisis React
-├── hooks/
-│   ├── pre-commit                      ← Git hook (generado por install.sh)
-│   ├── pre-push                        ← Git hook (generado por install.sh)
-│   └── lib/
-│       └── runner.sh                   ← Núcleo: lee config y ejecuta revisión
-├── prompts/
-│   └── pre-commit-review.md            ← Prompt para Claude en los hooks
-├── cursor-rules/
-│   ├── vercel-react-review.mdc         ← Reglas para Cursor
-│   └── react-doctor-check.mdc
-├── codex/
-│   └── AGENTS.md                       ← Instrucciones para Codex CLI
-├── github-action/
-│   └── claude-review.yml               ← Template GitHub Action
-└── scripts/
-    └── run-review.sh                   ← Revisión manual
-```
+1. `npm run review` detecta los archivos modificados via `git diff`
+2. Limita a max 10 archivos para no saturar el contexto
+3. Archivos largos (+400 lineas) se truncan a las primeras 100
+4. El prompt incluye las reglas embebidas (sin WebFetch, sin dependencia de red)
+5. Claude analiza y devuelve JSON estructurado con findings + health score
+6. Se ofrece aplicar los fixes con el editor detectado
 
 ---
 
-## Desinstalar
+## Compatibilidad de editores
+
+| Editor | Deteccion en hook | Revision manual | Aplicar fixes |
+|---|---|---|---|
+| **Claude Code** | React Doctor + static | `npm run review` (completo) | Automatico con confirmacion |
+| **Cursor** | React Doctor + static | `.mdc` rules (inline, gratis) | Cursor Chat con fixes.md |
+| **Codex CLI** | React Doctor + static | `npm run review` | Codex aplica los fixes |
+| **Sin editor AI** | React Doctor + static | `npm run review` (sin fixes) | Reporte en `.claude-review/` |
+
+---
+
+## GitHub Actions
+
+Para revision automatica en PRs:
 
 ```bash
-cd .claude-toolkit && ./install.sh --uninstall
+# Copiar el template al proyecto
+mkdir -p .github/workflows
+cp ~/claude-react-toolkit/github-action/claude-review.yml .github/workflows/
 ```
 
-Elimina los git hooks, los skills de `~/.claude/`, restaura el `code-reviewer.md` original y borra el archivo de config del proyecto.
+Requiere `ANTHROPIC_API_KEY` en los secrets del repositorio.
+
+---
+
+## Estructura del toolkit
+
+```
+claude-react-toolkit/
+├── install.sh                    # Wizard de instalacion
+├── README.md
+├── config/
+│   └── defaults.json             # Valores por defecto
+├── hooks/
+│   ├── pre-commit                # Hook de git
+│   ├── pre-push                  # Hook de git
+│   └── lib/
+│       └── runner.sh             # Logica del hook (sin API calls)
+├── scripts/
+│   └── run-review.sh             # Revision manual completa
+├── prompts/
+│   └── pre-commit-review.md      # Prompt para Claude (reglas embebidas)
+├── skills/
+│   └── vercel-react-review/      # Skill para Claude Code
+│       ├── SKILL.md
+│       └── AGENTS.md
+├── agents/
+│   └── code-reviewer.md          # Agent definition para Claude Code
+├── cursor-rules/
+│   ├── vercel-react-review.mdc   # Reglas CRITICAL/HIGH para Cursor
+│   └── react-health-check.mdc   # Reglas de salud para Cursor
+├── codex/
+│   └── AGENTS.md                 # Instrucciones para Codex CLI
+└── github-action/
+    └── claude-review.yml         # Template GitHub Action para PRs
+```
+
+---
+
+## Requisitos
+
+- **Node.js** 18+ con `npx` (para React Doctor)
+- **Git** (para deteccion de archivos modificados)
+- **Claude Code CLI** (para revision Vercel y aplicar fixes) — `npm install -g @anthropic-ai/claude-code`
+- **Python 3** (incluido en macOS/Linux, para parsear JSON)
+- **Cursor** o **Codex CLI** (opcionales, alternativas a Claude Code)
 
 ---
 
 ## Licencia
 
-MIT — Usa, modifica y comparte libremente.
-
----
-
-*Basado en las reglas de [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills). Compatible con Claude Code de Anthropic.*
+MIT — Creado por [diego-beai](https://github.com/diego-beai)

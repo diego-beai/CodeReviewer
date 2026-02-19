@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
 # CodeReviewer — hooks/lib/runner.sh
-# Deteccion: Vercel React Review + React Doctor
-# Fixes: el editor AI en uso (Claude Code, Cursor, Codex)
+# Hook ligero: sin API calls, sin tokens quemados en cada commit.
+#
+# Deteccion: React Doctor (gratis) + patron estatico CRITICAL (regex)
+# Fixes:     el editor AI en uso, solo cuando el usuario lo pide
 #
 # Uso: runner.sh <ruta-config> <hook-name>
 # =============================================================================
@@ -12,7 +14,6 @@ set -euo pipefail
 CONFIG_PATH="${1:-}"
 HOOK_NAME="${2:-pre-commit}"
 
-# ─── Colores ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
@@ -21,7 +22,7 @@ BOLD='\033[1m'
 DIM='\033[2m'
 RESET='\033[0m'
 
-# ─── Leer configuracion ───────────────────────────────────────────────────────
+# ─── Config ───────────────────────────────────────────────────────────────────
 read_config() {
   local key="$1" default="$2"
   if [[ -f "$CONFIG_PATH" ]] && command -v python3 &>/dev/null; then
@@ -46,39 +47,19 @@ BLOCK_SCORE=$(read_config "blocking.on_low_doctor_score" "true")
 REPORT_LEVEL=$(read_config "reporting.level" "critical_high")
 REPORT_DIR=$(read_config "reporting.report_dir" ".claude-review")
 FIX_MODE=$(read_config "auto_fix.mode" "ask")
-USE_VERCEL=$(read_config "tools.vercel_review" "true")
 USE_DOCTOR=$(read_config "tools.react_doctor" "true")
 
-# ─── Verificar si este hook debe ejecutarse ───────────────────────────────────
-[[ "$HOOK_NAME" == "pre-commit" && "$TRIGGER" == "pre-push" ]] && exit 0
+[[ "$HOOK_NAME" == "pre-commit" && "$TRIGGER" == "pre-push"   ]] && exit 0
 [[ "$HOOK_NAME" == "pre-push"   && "$TRIGGER" == "pre-commit" ]] && exit 0
 [[ "$TRIGGER" == "manual" ]] && exit 0
-
-# ─── Detectar editor AI disponible para fixes ─────────────────────────────────
-detect_fix_editor() {
-  if command -v claude &>/dev/null; then
-    echo "claude"
-  elif command -v codex &>/dev/null; then
-    echo "codex"
-  elif [[ -d ".cursor" ]]; then
-    echo "cursor"
-  else
-    echo "none"
-  fi
-}
-FIX_EDITOR=$(detect_fix_editor)
 
 # ─── Banner ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}${BOLD}┌──────────────────────────────────────────────────┐${RESET}"
-if [[ "$HOOK_NAME" == "pre-commit" ]]; then
-  echo -e "${CYAN}${BOLD}│  ⚡ CodeReviewer — Pre-commit Review             │${RESET}"
-else
-  echo -e "${CYAN}${BOLD}│  ⚡ CodeReviewer — Pre-push Review               │${RESET}"
-fi
+echo -e "${CYAN}${BOLD}│  ⚡ CodeReviewer — ${HOOK_NAME} check           │${RESET}"
 echo -e "${CYAN}${BOLD}└──────────────────────────────────────────────────┘${RESET}"
 
-# ─── Detectar archivos a revisar ─────────────────────────────────────────────
+# ─── Archivos staged ─────────────────────────────────────────────────────────
 if [[ "$HOOK_NAME" == "pre-commit" ]]; then
   FILES=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '\.(tsx?|jsx?)$' || true)
 else
@@ -88,276 +69,150 @@ else
 fi
 
 if [[ -z "$FILES" ]]; then
-  echo -e "${GREEN}  ✓ Sin archivos React en staging. Continuando...${RESET}"
+  echo -e "${GREEN}  ✓ Sin archivos React. Continuando.${RESET}"
   echo ""
   exit 0
 fi
 
 FILE_COUNT=$(echo "$FILES" | grep -c . || echo 0)
-echo -e "${CYAN}  Analizando ${BOLD}${FILE_COUNT} archivo(s)${RESET}${CYAN} React...${RESET}"
+echo -e "${CYAN}  ${FILE_COUNT} archivo(s) React en staging${RESET}"
+echo ""
 
-# ─── Variables de resultado ───────────────────────────────────────────────────
 FOUND_CRITICAL=false
+STATIC_ISSUES=""
 DOCTOR_SCORE=-1
 DOCTOR_ISSUES=""
-VERCEL_JSON=""
 
-# ─── [1/2] Vercel React Review (via Claude) ───────────────────────────────────
-run_vercel_review() {
-  [[ "$USE_VERCEL" != "true" ]] && return 0
-  echo ""
-  echo -e "${CYAN}${BOLD}  [1/2] Vercel React Review${RESET}"
+# ─── [1] Deteccion estatica CRITICAL (sin API, sin tokens) ────────────────────
+# Solo busca los dos patrones CRITICAL mas importantes con grep
+echo -e "${CYAN}${BOLD}  [1/2] Deteccion estatica${RESET}"
 
-  if ! command -v claude &>/dev/null; then
-    echo -e "      ${YELLOW}⚠ Claude Code CLI no disponible — saltando${RESET}"
-    return 0
+while IFS= read -r file; do
+  [[ -f "$file" ]] || continue
+
+  # async-parallel: dos o mas awaits seguidos en el mismo bloque
+  AWAIT_LINES=$(grep -n "^\s*\(const\|let\)\s.*=\s*await\s" "$file" 2>/dev/null || true)
+  if [[ $(echo "$AWAIT_LINES" | grep -c . || echo 0) -ge 2 ]]; then
+    # Verificar que son consecutivos (numeros de linea proximos)
+    CONSECUTIVE=$(echo "$AWAIT_LINES" | awk -F: 'prev && $1-prev<=3{found=1} {prev=$1} END{print found+0}')
+    if [[ "$CONSECUTIVE" -ge 1 ]]; then
+      FOUND_CRITICAL=true
+      STATIC_ISSUES+="  ${RED}[CRITICAL]${RESET} ${BOLD}${file}${RESET} — async-parallel\n"
+      STATIC_ISSUES+="    Awaits secuenciales detectados. Usa Promise.all([...])\n\n"
+    fi
   fi
 
-  # Construir prompt con el contenido de los archivos
-  local files_content=""
-  while IFS= read -r file; do
-    [[ -f "$file" ]] || continue
-    files_content+="### File: $file\n\`\`\`typescript\n$(cat "$file")\n\`\`\`\n\n"
-  done <<< "$FILES"
-
-  local toolkit_dir
-  toolkit_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-  local prompt_file="$toolkit_dir/prompts/pre-commit-review.md"
-  local prompt
-
-  if [[ -f "$prompt_file" ]]; then
-    prompt=$(sed "s|{{FILES_CONTENT}}|$files_content|g" "$prompt_file")
-  else
-    prompt="Review these React files for async-parallel, bundle-barrel-imports, boolean-props, derived-state-in-useEffect violations. Output JSON: {has_critical, findings:[{file,line,rule,severity,problem,fix}], summary}. Files:\n$files_content"
+  # bundle-barrel-imports: imports desde carpeta sin archivo especifico
+  BARREL=$(grep -n "^import.*from '\.\./[a-zA-Z]*'" "$file" 2>/dev/null | grep -v "\.[a-zA-Z]*'" || true)
+  if [[ -n "$BARREL" ]]; then
+    # Comprobar que existe un index.ts en esa carpeta
+    while IFS= read -r bline; do
+      DIR=$(echo "$bline" | grep -o "'\.\./[a-zA-Z]*'" | tr -d "'" | sed "s|^\.\./||")
+      BASEDIR=$(dirname "$file")
+      if [[ -f "${BASEDIR}/../${DIR}/index.ts" ]] || [[ -f "${BASEDIR}/../${DIR}/index.tsx" ]]; then
+        FOUND_CRITICAL=true
+        STATIC_ISSUES+="  ${RED}[CRITICAL]${RESET} ${BOLD}${file}${RESET} — bundle-barrel-imports\n"
+        STATIC_ISSUES+="    Import desde barrel detectado. Importa directamente desde el archivo fuente.\n\n"
+        break
+      fi
+    done <<< "$BARREL"
   fi
 
-  local raw_output
-  raw_output=$(echo "$prompt" | claude --no-header -p 2>/dev/null || echo '{"has_critical":false,"findings":[],"summary":"Error"}')
+done <<< "$FILES"
 
-  VERCEL_JSON=$(echo "$raw_output" | python3 -c "
-import sys, json, re
-content = sys.stdin.read()
-match = re.search(r'\{.*\}', content, re.DOTALL)
-if match:
-    try: print(json.dumps(json.loads(match.group())))
-    except: print('{\"has_critical\":false,\"findings\":[],\"summary\":\"Parse error\"}')
-else:
-    print('{\"has_critical\":false,\"findings\":[],\"summary\":\"No JSON\"}')
-" 2>/dev/null || echo '{"has_critical":false,"findings":[],"summary":"Error"}')
+if [[ -z "$STATIC_ISSUES" ]]; then
+  echo -e "  ${GREEN}  ✓ Sin violaciones CRITICAL${RESET}"
+else
+  printf '%b' "$STATIC_ISSUES"
+fi
+echo ""
 
-  local has_critical findings_count summary
-  has_critical=$(echo "$VERCEL_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print('true' if d.get('has_critical') else 'false')" 2>/dev/null || echo "false")
-  findings_count=$(echo "$VERCEL_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('findings',[])))" 2>/dev/null || echo "0")
-  summary=$(echo "$VERCEL_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',''))" 2>/dev/null || echo "")
-
-  [[ "$has_critical" == "true" ]] && FOUND_CRITICAL=true
-
-  if [[ "$findings_count" -eq 0 ]]; then
-    echo -e "      ${GREEN}✓ Sin violaciones — $summary${RESET}"
-  else
-    export REPORT_LEVEL
-    echo "$VERCEL_JSON" | python3 - << 'PYEOF'
-import sys, json, os
-data     = json.load(sys.stdin)
-level    = os.environ.get('REPORT_LEVEL', 'critical_high')
-findings = data.get('findings', [])
-colors   = {'CRITICAL':'\033[0;31m','HIGH':'\033[1;33m','MEDIUM':'\033[0;33m','LOW':'\033[0;37m'}
-reset, bold = '\033[0m', '\033[1m'
-
-def show(sev):
-    if level == 'critical':             return sev == 'CRITICAL'
-    if level == 'critical_high':        return sev in ('CRITICAL','HIGH')
-    if level == 'critical_high_medium': return sev != 'LOW'
-    return True
-
-for f in findings:
-    sev = f.get('severity','LOW')
-    if not show(sev): continue
-    c = colors.get(sev, reset)
-    print(f"      {c}[{sev}]{reset} {bold}{f.get('file','')}:{f.get('line','?')}{reset}")
-    print(f"        Regla:    {f.get('rule','')}")
-    print(f"        Problema: {f.get('problem','')}")
-    print(f"        Fix:      {f.get('fix','')}")
-    print()
-PYEOF
-    echo -e "      ${DIM}$summary${RESET}"
-  fi
-}
-
-# ─── [2/2] React Doctor (deteccion) ──────────────────────────────────────────
-run_doctor() {
-  [[ "$USE_DOCTOR" != "true" ]] && return 0
-  echo ""
+# ─── [2] React Doctor (sin API, sin tokens) ───────────────────────────────────
+if [[ "$USE_DOCTOR" == "true" ]]; then
   echo -e "${CYAN}${BOLD}  [2/2] React Doctor${RESET}"
 
   if ! command -v npx &>/dev/null; then
-    echo -e "      ${YELLOW}⚠ npx no disponible — saltando${RESET}"
-    return 0
-  fi
+    echo -e "  ${YELLOW}  ⚠ npx no disponible${RESET}"
+  else
+    DOCTOR_RAW=$(npx react-doctor 2>/dev/null || echo "")
 
-  # Capturar output completo de react-doctor
-  local raw_output
-  raw_output=$(npx react-doctor 2>/dev/null || echo "")
-
-  if [[ -z "$raw_output" ]]; then
-    echo -e "      ${YELLOW}⚠ react-doctor sin output${RESET}"
-    return 0
-  fi
-
-  # Extraer score
-  DOCTOR_SCORE=$(echo "$raw_output" | python3 -c "
+    if [[ -n "$DOCTOR_RAW" ]]; then
+      DOCTOR_SCORE=$(echo "$DOCTOR_RAW" | python3 -c "
 import sys, re, json
-content = sys.stdin.read()
+c = sys.stdin.read()
 try:
-    data = json.loads(content)
-    print(data.get('score', data.get('totalScore', -1)))
+    d = json.loads(c)
+    print(d.get('score', d.get('totalScore', -1)))
 except:
-    m = re.search(r'[Ss]core[:\s]+(\d+)', content)
+    m = re.search(r'(\d+)\s*/\s*100', c)
     print(m.group(1) if m else -1)
 " 2>/dev/null || echo "-1")
 
-  # Guardar issues para pasarlos al editor de fixes
-  DOCTOR_ISSUES="$raw_output"
+      DOCTOR_ISSUES="$DOCTOR_RAW"
 
-  # Mostrar score
-  if [[ "$DOCTOR_SCORE" != "-1" ]]; then
-    if [[ "$BLOCK_SCORE" == "true" ]] && [[ "$DOCTOR_SCORE" -lt "$SCORE_THRESHOLD" ]]; then
-      FOUND_CRITICAL=true
-      echo -e "      ${RED}✗ Score: ${BOLD}${DOCTOR_SCORE}/100${RESET} ${RED}(umbral: ${SCORE_THRESHOLD})${RESET}"
-    elif [[ "$DOCTOR_SCORE" -lt 70 ]]; then
-      echo -e "      ${YELLOW}⚠ Score: ${BOLD}${DOCTOR_SCORE}/100${RESET} ${DIM}(recomendado >70)${RESET}"
+      if [[ "$DOCTOR_SCORE" != "-1" ]]; then
+        if [[ "$BLOCK_SCORE" == "true" ]] && [[ "$DOCTOR_SCORE" -lt "$SCORE_THRESHOLD" ]]; then
+          FOUND_CRITICAL=true
+          echo -e "  ${RED}  ✗ Score: ${BOLD}${DOCTOR_SCORE}/100${RESET} ${RED}(umbral: ${SCORE_THRESHOLD})${RESET}"
+        elif [[ "$DOCTOR_SCORE" -lt 70 ]]; then
+          echo -e "  ${YELLOW}  ⚠ Score: ${BOLD}${DOCTOR_SCORE}/100${RESET}"
+        else
+          echo -e "  ${GREEN}  ✓ Score: ${BOLD}${DOCTOR_SCORE}/100${RESET}"
+        fi
+
+        # Mostrar solo los warnings relevantes del nivel configurado
+        case "$REPORT_LEVEL" in
+          critical)
+            echo "$DOCTOR_RAW" | grep -i "error\|critical" | head -5 | sed 's/^/    /' || true ;;
+          critical_high)
+            echo "$DOCTOR_RAW" | grep -i "error\|critical\|warning" | head -8 | sed 's/^/    /' || true ;;
+          *)
+            echo "$DOCTOR_RAW" | grep -E "^  ⚠|^  ✓|^  ✗" | head -10 | sed 's/^/  /' || true ;;
+        esac
+      fi
     else
-      echo -e "      ${GREEN}✓ Score: ${BOLD}${DOCTOR_SCORE}/100${RESET}"
+      echo -e "  ${YELLOW}  ⚠ react-doctor sin output${RESET}"
     fi
-    # Mostrar primeras lineas del reporte (issues detectados)
-    echo "$raw_output" | grep -E "(error|warning|issue|problem|fix)" -i | head -6 | sed 's/^/        /' || true
   fi
-}
+  echo ""
+fi
 
-# ─── Ejecutar revisiones ──────────────────────────────────────────────────────
-run_vercel_review
-run_doctor
-
-echo ""
-
-# ─── Guardar reporte ──────────────────────────────────────────────────────────
+# ─── Guardar reporte ligero ───────────────────────────────────────────────────
 mkdir -p "$REPORT_DIR"
 TS=$(date +%Y%m%d-%H%M%S)
-REPORT_FILE="$REPORT_DIR/${HOOK_NAME}-${TS}.json"
-python3 - << PYEOF > "$REPORT_FILE" 2>/dev/null || true
-import json
-vercel = {}
-try: vercel = json.loads('''${VERCEL_JSON:-{}}''')
-except: pass
-print(json.dumps({
-    "timestamp": "${TS}",
-    "hook": "${HOOK_NAME}",
-    "doctor_score": ${DOCTOR_SCORE},
-    "found_critical": ${FOUND_CRITICAL},
-    "vercel_review": vercel
-}, indent=2))
-PYEOF
-
-# ─── Aplicar fixes con el editor activo ───────────────────────────────────────
-apply_fixes_with_editor() {
-  # Construir lista de issues de ambas herramientas para el editor
-  local issues_for_editor=""
-
-  # Issues de Vercel Review
-  if [[ -n "$VERCEL_JSON" ]]; then
-    local vercel_issues
-    vercel_issues=$(echo "$VERCEL_JSON" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-findings = [f for f in d.get('findings',[]) if f.get('severity') in ('CRITICAL','HIGH')]
-for f in findings:
-    print(f\"[{f.get('severity')}] {f.get('file')}:{f.get('line')} — {f.get('rule')}\")
-    print(f\"  Problema: {f.get('problem')}\")
-    print(f\"  Fix: {f.get('fix')}\")
-    print()
-" 2>/dev/null || true)
-    [[ -n "$vercel_issues" ]] && issues_for_editor+="=== Vercel React Review ===\n$vercel_issues\n"
-  fi
-
-  # Issues de React Doctor
-  if [[ -n "$DOCTOR_ISSUES" ]]; then
-    issues_for_editor+="=== React Doctor ===\n$DOCTOR_ISSUES\n"
-  fi
-
-  [[ -z "$issues_for_editor" ]] && return 0
-
-  echo -e "  ${CYAN}${BOLD}Fixes disponibles — Editor detectado: ${BOLD}${FIX_EDITOR}${RESET}"
+REPORT_FILE="$REPORT_DIR/${HOOK_NAME}-${TS}.txt"
+{
+  echo "CodeReviewer — $HOOK_NAME — $TS"
+  echo "Files: $FILE_COUNT"
+  echo "Doctor score: $DOCTOR_SCORE"
+  echo "Found critical: $FOUND_CRITICAL"
   echo ""
+  [[ -n "$STATIC_ISSUES" ]] && printf '%b' "$STATIC_ISSUES"
+  [[ -n "$DOCTOR_ISSUES" ]] && echo "$DOCTOR_ISSUES"
+} > "$REPORT_FILE" 2>/dev/null || true
 
+# ─── Detectar editor para sugerir fix ────────────────────────────────────────
+detect_editor() {
+  command -v claude &>/dev/null && echo "claude" && return
+  command -v codex  &>/dev/null && echo "codex"  && return
+  [[ -d ".cursor" ]]            && echo "cursor" && return
+  echo "none"
+}
+FIX_EDITOR=$(detect_editor)
+
+suggest_fix_command() {
+  # Solo sugiere el comando, NO lo ejecuta automaticamente
+  # Los fixes con AI se hacen bajo demanda, no en cada commit
   case "$FIX_EDITOR" in
     claude)
-      local confirmed=false
-      if [[ "$FIX_MODE" == "auto" ]]; then
-        confirmed=true
-      elif [[ "$FIX_MODE" == "ask" ]]; then
-        printf "  ${BOLD}¿Aplicar fixes con Claude Code? [s/N]:${RESET} "
-        read -r ans </dev/tty || ans="n"
-        ans=$(echo "${ans:-n}" | tr '[:upper:]' '[:lower:]')
-        [[ "$ans" == "s" || "$ans" == "si" || "$ans" == "y" ]] && confirmed=true
-      fi
-
-      if [[ "$confirmed" == "true" ]]; then
-        echo ""
-        echo -e "  ${CYAN}Claude Code aplicando fixes...${RESET}"
-        local fix_prompt="You are fixing a React/TypeScript project. Apply the following fixes found by React Doctor and Vercel React Review.
-
-Rules:
-- Only fix CRITICAL and HIGH severity issues
-- Make minimal, surgical changes — do not refactor surrounding code
-- Never break existing functionality
-- Apply each fix directly to its file using the Edit tool
-
-Issues to fix:
-$(printf '%b' "$issues_for_editor")"
-
-        echo "$fix_prompt" | claude --no-header -p 2>/dev/null && \
-          echo -e "\n  ${GREEN}✓ Fixes aplicados. Revisa los cambios y vuelve a hacer commit.${RESET}" || \
-          echo -e "\n  ${YELLOW}  No se pudieron aplicar todos los fixes.${RESET}"
-      fi
-      ;;
-
-    codex)
-      if [[ "$FIX_MODE" != "report_only" ]]; then
-        printf "  ${BOLD}¿Aplicar fixes con Codex? [s/N]:${RESET} "
-        read -r ans </dev/tty || ans="n"
-        ans=$(echo "${ans:-n}" | tr '[:upper:]' '[:lower:]')
-        if [[ "$ans" == "s" || "$ans" == "si" || "$ans" == "y" ]]; then
-          echo ""
-          echo -e "  ${CYAN}Codex aplicando fixes...${RESET}"
-          printf '%b' "$issues_for_editor" | codex "Fix these React issues in the project files. Only fix CRITICAL and HIGH severity. Make minimal changes." 2>/dev/null && \
-            echo -e "\n  ${GREEN}✓ Fixes aplicados por Codex.${RESET}" || \
-            echo -e "\n  ${YELLOW}  Codex no pudo aplicar los fixes.${RESET}"
-        fi
-      fi
-      ;;
-
+      echo -e "  ${DIM}Para aplicar fixes: ${CYAN}npm run review${RESET}${DIM} o ${CYAN}/vercel-react-review${RESET}${DIM} en Claude Code${RESET}" ;;
     cursor)
-      # Cursor no tiene CLI — guardar issues en archivo para abrir en el editor
-      local cursor_file="$REPORT_DIR/cursor-fixes-${TS}.md"
-      {
-        echo "# CodeReviewer — Fixes pendientes"
-        echo ""
-        echo "Abre este archivo en Cursor y pide: **\"Apply all fixes listed here\"**"
-        echo ""
-        printf '%b' "$issues_for_editor"
-      } > "$cursor_file"
-      echo -e "  ${CYAN}Abre en Cursor y pide que aplique los fixes:${RESET}"
-      echo -e "  ${BOLD}${cursor_file}${RESET}"
-      ;;
-
+      echo -e "  ${DIM}Para aplicar fixes: abre el reporte en Cursor → ${CYAN}${REPORT_FILE}${RESET}" ;;
+    codex)
+      echo -e "  ${DIM}Para aplicar fixes: ${CYAN}npm run review${RESET}" ;;
     none)
-      echo -e "  ${YELLOW}No se detectó editor AI disponible.${RESET}"
-      echo -e "  ${DIM}Instala Claude Code: npm install -g @anthropic-ai/claude-code${RESET}"
-      echo -e "  ${DIM}O abre el reporte en tu editor: ${REPORT_FILE}${RESET}"
-      ;;
+      echo -e "  ${DIM}Reporte en: ${CYAN}${REPORT_FILE}${RESET}" ;;
   esac
-
-  echo ""
 }
 
 # ─── Decision final ───────────────────────────────────────────────────────────
@@ -369,43 +224,38 @@ if [[ "$FOUND_CRITICAL" == "true" ]]; then
       echo -e "${CYAN}${BOLD}│  Resultado: ${YELLOW}ADVERTENCIA${CYAN} — Commit permitido        │${RESET}"
       echo -e "${CYAN}${BOLD}└──────────────────────────────────────────────────┘${RESET}"
       echo ""
-      echo -e "  ${DIM}Reporte: ${REPORT_FILE}${RESET}"
+      suggest_fix_command
       echo ""
-      apply_fixes_with_editor
       exit 0
       ;;
-
     ask)
       echo -e "${CYAN}${BOLD}│  Resultado: ${YELLOW}DECISION REQUERIDA${CYAN}                    │${RESET}"
       echo -e "${CYAN}${BOLD}└──────────────────────────────────────────────────┘${RESET}"
       echo ""
       printf "  ${BOLD}¿Continuar de todas formas? [s/N]:${RESET} "
-      read -r user_ans </dev/tty || user_ans="n"
-      user_ans=$(echo "${user_ans:-n}" | tr '[:upper:]' '[:lower:]')
-      if [[ "$user_ans" == "s" || "$user_ans" == "si" || "$user_ans" == "y" ]]; then
-        echo ""
+      read -r ans </dev/tty || ans="n"
+      ans=$(echo "${ans:-n}" | tr '[:upper:]' '[:lower:]')
+      if [[ "$ans" == "s" || "$ans" == "si" || "$ans" == "y" ]]; then
         exit 0
       fi
-      apply_fixes_with_editor
+      suggest_fix_command
       exit 1
       ;;
-
     block|*)
       echo -e "${CYAN}${BOLD}│  Resultado: ${RED}BLOQUEADO${CYAN} — Corrige antes de continuar │${RESET}"
       echo -e "${CYAN}${BOLD}└──────────────────────────────────────────────────┘${RESET}"
       echo ""
-      echo -e "  ${DIM}Reporte: ${REPORT_FILE}${RESET}"
+      suggest_fix_command
       echo -e "  ${DIM}Para saltar: git commit --no-verify${RESET}"
       echo ""
-      apply_fixes_with_editor
       exit 1
       ;;
   esac
 else
-  local summary_text="Aprobado"
-  [[ "$DOCTOR_SCORE" != "-1" ]] && summary_text="Score React Doctor: ${DOCTOR_SCORE}/100"
-  echo -e "${CYAN}${BOLD}│  Resultado: ${GREEN}APROBADO${CYAN} — ${summary_text}${RESET}"
+  score_txt=""
+  [[ "$DOCTOR_SCORE" != "-1" ]] && score_txt=" — Doctor: ${DOCTOR_SCORE}/100"
+  echo -e "${CYAN}${BOLD}│  Resultado: ${GREEN}APROBADO${CYAN}${score_txt}${RESET}"
   echo -e "${CYAN}${BOLD}└──────────────────────────────────────────────────┘${RESET}"
-  echo -e "  ${DIM}Reporte: ${REPORT_FILE}${RESET}"
   echo ""
+  exit 0
 fi
