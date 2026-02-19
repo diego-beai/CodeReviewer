@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# claude-react-toolkit — run-review.sh
+# CodeReviewer — run-review.sh
 # Ejecuta la revision React manualmente (sin necesidad de hacer commit)
 # Uso:
 #   ./scripts/run-review.sh           → ambas revisiones (Vercel + Doctor)

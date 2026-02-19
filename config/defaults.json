@@ -1,5 +1,5 @@
 {
-  "_comment": "Configuracion por defecto del claude-react-toolkit. Copiada a .claude-toolkit.config.json durante la instalacion.",
+  "_comment": "Configuracion por defecto del CodeReviewer. Copiada a .claude-toolkit.config.json durante la instalacion.",
   "version": "1.0.0",
   "trigger": "pre-commit",
   "blocking": {

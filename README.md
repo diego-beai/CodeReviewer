@@ -1,4 +1,4 @@
-# ⚡ Claude React Toolkit
+# ⚡ CodeReviewer
 
 > Revisión automática de código React con IA, integrada en tu flujo de git.
 
@@ -59,10 +59,10 @@ El wizard te pregunta exactamente cómo quieres que funcione (ver [Configuració
 ### Opción B — Instalación global en tu máquina
 
 ```bash
-git clone https://github.com/diego-beai/CodeReviewer.git ~/claude-react-toolkit
+git clone https://github.com/diego-beai/CodeReviewer.git ~/CodeReviewer
 
 # Luego, en cada proyecto React donde quieras el toolkit:
-~/claude-react-toolkit/install.sh
+~/CodeReviewer/install.sh
 ```
 
 ### Opción C — Instalación rápida con defaults
@@ -256,7 +256,7 @@ Para las 57 reglas completas → [vercel-labs/agent-skills/react-best-practices]
 ## Estructura del repositorio
 
 ```
-claude-react-toolkit/
+CodeReviewer/
 ├── install.sh                          ← Wizard de instalación interactivo
 ├── config/
 │   └── defaults.json                   ← Valores por defecto

@@ -1,5 +1,5 @@
 # =============================================================================
-# claude-react-toolkit — GitHub Action
+# CodeReviewer — GitHub Action
 # Revisa automáticamente el código React en cada PR y comenta los hallazgos
 #
 # INSTALACION: Copia este archivo a .github/workflows/claude-review.yml
@@ -150,7 +150,7 @@ jobs:
 
             </details>
 
-            <sub>🤖 Generado por [claude-react-toolkit](https://github.com/) • [Reglas Vercel](https://github.com/vercel-labs/agent-skills)</sub>`;
+            <sub>🤖 Generado por [CodeReviewer](https://github.com/) • [Reglas Vercel](https://github.com/vercel-labs/agent-skills)</sub>`;
 
             // Buscar si ya existe un comentario anterior del bot para actualizarlo
             const { data: comments } = await github.rest.issues.listComments({

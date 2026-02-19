@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# claude-react-toolkit — hooks/lib/runner.sh
+# CodeReviewer — hooks/lib/runner.sh
 # Nucleo de la revision. Llamado por pre-commit y pre-push.
 # Lee .claude-toolkit.config.json y actua segun la configuracion del proyecto.
 #

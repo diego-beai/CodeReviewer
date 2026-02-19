@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# claude-react-toolkit — install.sh
+# CodeReviewer — install.sh
 # Wizard de instalacion interactivo. Configura las revisiones React segun
 # las preferencias de cada desarrollador y guarda la config en el proyecto.
 #
@@ -386,8 +386,8 @@ save_config() {
 
   cat > "$project_root/$CONFIG_FILE" << EOF
 {
-  "_info": "Configuracion del claude-react-toolkit. Puedes editar este archivo o ejecutar ./install.sh --update-config",
-  "_docs": "https://github.com/tu-org/claude-react-toolkit#configuracion",
+  "_info": "Configuracion del CodeReviewer. Puedes editar este archivo o ejecutar ./install.sh --update-config",
+  "_docs": "https://github.com/tu-org/CodeReviewer#configuracion",
   "version": "1.0.0",
   "trigger": "$CFG_TRIGGER",
   "blocking": {
@@ -495,16 +495,16 @@ install_git_hooks() {
     local hook_name="$1"
     local hook_file="$hooks_dir/$hook_name"
 
-    if [[ -f "$hook_file" ]] && grep -q "claude-react-toolkit" "$hook_file" 2>/dev/null; then
+    if [[ -f "$hook_file" ]] && grep -q "CodeReviewer" "$hook_file" 2>/dev/null; then
       print_info "Hook $hook_name ya esta instalado (omitiendo)"
       return 0
     fi
 
-    if [[ -f "$hook_file" ]] && ! grep -q "claude-react-toolkit" "$hook_file" 2>/dev/null; then
+    if [[ -f "$hook_file" ]] && ! grep -q "CodeReviewer" "$hook_file" 2>/dev/null; then
       # Agregar al hook existente
       {
         echo ""
-        echo "# ── claude-react-toolkit ──────────────────────────────────────"
+        echo "# ── CodeReviewer ──────────────────────────────────────"
         echo "\"$runner\" \"$config_path\" \"$hook_name\""
       } >> "$hook_file"
       print_ok "Toolkit agregado al $hook_name hook existente"
@@ -512,7 +512,7 @@ install_git_hooks() {
       # Crear nuevo hook
       cat > "$hook_file" << HOOKEOF
 #!/usr/bin/env bash
-# claude-react-toolkit — $hook_name hook
+# CodeReviewer — $hook_name hook
 # Generado por install.sh. Para reconfigurar: cd \$(git rev-parse --show-toplevel)/.claude-toolkit && ./install.sh --update-config
 "$runner" "$config_path" "$hook_name"
 HOOKEOF
@@ -553,7 +553,7 @@ fs.writeFileSync('$pkg', JSON.stringify(pkg, null, 2) + '\n');
 
 # ─── Desinstalacion ───────────────────────────────────────────────────────────
 uninstall() {
-  print_section "Desinstalando claude-react-toolkit"
+  print_section "Desinstalando CodeReviewer"
 
   # Skills
   [[ -d "$CLAUDE_DIR/skills/vercel-react-review" ]] && \
@@ -569,11 +569,11 @@ uninstall() {
   project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
   for hook in pre-commit pre-push; do
     local hook_file="$project_root/.git/hooks/$hook"
-    if [[ -f "$hook_file" ]] && grep -q "claude-react-toolkit" "$hook_file" 2>/dev/null; then
+    if [[ -f "$hook_file" ]] && grep -q "CodeReviewer" "$hook_file" 2>/dev/null; then
       # Eliminar solo las lineas del toolkit, no el hook completo
       local tmp
       tmp=$(mktemp)
-      grep -v "claude-react-toolkit\|runner.sh" "$hook_file" > "$tmp" || true
+      grep -v "CodeReviewer\|runner.sh" "$hook_file" > "$tmp" || true
       mv "$tmp" "$hook_file"
       chmod +x "$hook_file"
       print_ok "Hook $hook limpiado"
@@ -682,7 +682,7 @@ show_final_summary() {
 case "$MODE" in
   --help|-h)
     echo ""
-    echo -e "${BOLD}claude-react-toolkit — install.sh${RESET}"
+    echo -e "${BOLD}CodeReviewer — install.sh${RESET}"
     echo ""
     echo "  ./install.sh                  → Wizard interactivo (recomendado)"
     echo "  ./install.sh --quick          → Instalacion con defaults"
