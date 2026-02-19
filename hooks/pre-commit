@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# claude-react-toolkit — pre-commit hook
+# Generado por install.sh. Para reconfigurar: npm run review:config
+RUNNER="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)/runner.sh"
+CONFIG="$(git rev-parse --show-toplevel 2>/dev/null)/.claude-toolkit.config.json"
+"$RUNNER" "$CONFIG" "pre-commit"

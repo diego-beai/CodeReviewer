@@ -1,0 +1,162 @@
+---
+description: Audita archivos React/TypeScript contra las mejores practicas de Vercel (vercel-labs/agent-skills). Aplica al editar componentes, hooks o servicios.
+globs:
+  - "**/*.tsx"
+  - "**/*.ts"
+  - "**/*.jsx"
+  - "**/*.js"
+alwaysApply: false
+---
+
+# Vercel React Review — Cursor Rules
+
+Cuando edites o revises archivos React/TypeScript, aplica estas reglas de mejores practicas del equipo de Vercel.
+
+## Reglas CRITICAL (siempre corregir)
+
+### async-parallel
+**Problema**: Multiples `await` secuenciales sin dependencia de datos entre si.
+**Detectar**: Dos o mas `await fetch/axios/supabase/prisma` consecutivos donde el segundo no depende del primero.
+**Corregir**: Envolver en `Promise.all([...])`.
+
+```tsx
+// MAL - secuencial, lento
+const user = await fetchUser(id)
+const posts = await fetchPosts(id)
+const settings = await fetchSettings(id)
+
+// BIEN - paralelo, rapido
+const [user, posts, settings] = await Promise.all([
+  fetchUser(id),
+  fetchPosts(id),
+  fetchSettings(id)
+])
+```
+
+### bundle-barrel-imports
+**Problema**: Imports desde archivos barrel (index.ts) que hacen que el bundler incluya todo el modulo.
+**Detectar**: `import { X } from '../components'` cuando existe `components/index.ts`.
+**Corregir**: Import directo desde el archivo fuente.
+
+```tsx
+// MAL - importa todo el modulo components
+import { Button, Input, Modal } from '../components'
+import { useAuth, useTheme } from '../hooks'
+
+// BIEN - tree-shaking efectivo
+import { Button } from '../components/Button'
+import { Input } from '../components/Input'
+import { Modal } from '../components/Modal'
+import { useAuth } from '../hooks/useAuth'
+import { useTheme } from '../hooks/useTheme'
+```
+
+## Reglas HIGH (corregir cuando sea posible)
+
+### architecture-avoid-boolean-props
+**Problema**: Componentes con 3+ props booleanas que actuan como modos/estados.
+**Detectar**: `isLoading`, `isDisabled`, `isPrimary`, `isOutlined`, `isSmall` en el mismo componente.
+**Corregir**: Usar `variant` o `status` con union type.
+
+```tsx
+// MAL
+<Button isLoading={true} isPrimary={true} isDisabled={false} isLarge={true} />
+
+// BIEN
+<Button variant="primary" size="large" status="loading" />
+
+// Tipo correspondiente
+type ButtonProps = {
+  variant: 'primary' | 'secondary' | 'ghost' | 'danger'
+  size?: 'sm' | 'md' | 'lg'
+  status?: 'idle' | 'loading' | 'success' | 'error'
+}
+```
+
+### architecture-compound-components
+**Problema**: Componente de 100+ lineas que gestiona multiples concerns internamente.
+**Detectar**: Componente con muchas props para controlar sub-partes (headerTitle, footerContent, sidebarItems...).
+**Corregir**: Patron compound components con subcomponentes especializados.
+
+```tsx
+// MAL
+<Card title="..." footer="..." badge="..." actions={[...]} headerColor="..." />
+
+// BIEN
+<Card>
+  <Card.Header>
+    <Card.Badge>Nuevo</Card.Badge>
+    <Card.Title>...</Card.Title>
+  </Card.Header>
+  <Card.Body>...</Card.Body>
+  <Card.Footer>
+    <Card.Actions>{...}</Card.Actions>
+  </Card.Footer>
+</Card>
+```
+
+## Reglas MEDIUM (mejorar cuando refactorices)
+
+### rerender-derived-state-no-effect
+**Problema**: Calcular estado derivado con `useEffect` + `setState` en lugar de derivarlo directamente.
+**Detectar**: `useEffect(() => { setState(transform(props)) }, [props])`.
+**Corregir**: Calcular el valor en el render sin estado extra.
+
+```tsx
+// MAL - causa render extra
+const [fullName, setFullName] = useState('')
+useEffect(() => {
+  setFullName(`${firstName} ${lastName}`)
+}, [firstName, lastName])
+
+// BIEN - sin render extra
+const fullName = `${firstName} ${lastName}`
+
+// BIEN con useMemo si el calculo es costoso
+const expensiveValue = useMemo(() => heavyComputation(data), [data])
+```
+
+### rerender-memo
+**Problema**: Componente que recibe props primitivas pero se re-renderiza al hacerlo el padre.
+**Detectar**: Componentes puros (sin side effects) que renderizan con la misma data.
+**Corregir**: Envolver con `React.memo()`.
+
+```tsx
+// MAL - se re-renderiza aunque props no cambien
+function UserCard({ name, email }: { name: string; email: string }) {
+  return <div>{name} — {email}</div>
+}
+
+// BIEN
+const UserCard = React.memo(function UserCard({ name, email }: { name: string; email: string }) {
+  return <div>{name} — {email}</div>
+})
+```
+
+### rerender-stable-callbacks
+**Problema**: Funciones creadas en el render que se pasan como props, causando re-renders en hijos.
+**Detectar**: Arrow functions inline pasadas como props a componentes memorizados.
+**Corregir**: Envolver con `useCallback`.
+
+```tsx
+// MAL - nueva referencia en cada render
+<List onItemClick={(id) => handleSelect(id)} />
+
+// BIEN - referencia estable
+const handleItemClick = useCallback((id: string) => {
+  handleSelect(id)
+}, [handleSelect])
+<List onItemClick={handleItemClick} />
+```
+
+## Cuando aplica esta regla
+
+- Al crear un nuevo componente o hook
+- Al revisar codigo antes de un PR
+- Al ver que un componente se re-renderiza mas de lo esperado
+- Al optimizar el bundle size de la aplicacion
+- Al refactorizar componentes complejos
+
+## Referencia completa de reglas
+
+Para las 57 reglas completas: https://github.com/vercel-labs/agent-skills/tree/main/skills/react-best-practices

@@ -1,0 +1,23 @@
+{
+  "_comment": "Configuracion por defecto del claude-react-toolkit. Copiada a .claude-toolkit.config.json durante la instalacion.",
+  "version": "1.0.0",
+  "trigger": "pre-commit",
+  "blocking": {
+    "on_critical": true,
+    "on_low_doctor_score": true,
+    "doctor_score_threshold": 50
+  },
+  "reporting": {
+    "level": "critical_high",
+    "save_report": true,
+    "report_dir": ".claude-review"
+  },
+  "auto_fix": {
+    "ask_before_fixing": true,
+    "only_high_confidence": true
+  },
+  "tools": {
+    "vercel_review": true,
+    "react_doctor": true
+  }
+}

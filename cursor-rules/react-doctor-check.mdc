@@ -1,0 +1,38 @@
+---
+description: Sugiere ejecutar react-doctor al terminar cambios en componentes React para verificar el score de salud del proyecto.
+globs:
+  - "**/*.tsx"
+  - "**/*.jsx"
+alwaysApply: false
+---
+
+# React Doctor Check — Cursor Rule
+
+Cuando hayas terminado de implementar cambios en componentes React, recuerda ejecutar:
+
+```bash
+npx react-doctor
+```
+
+Esto analiza el proyecto y devuelve un score de salud (0-100) evaluando:
+- Uso correcto de hooks
+- Patrones de estado
+- Estructura de componentes
+- Anti-patterns comunes
+
+**Score objetivo**: >70 para proyectos en desarrollo, >85 para produccion.
+
+Si el score baja de 70, revisa los warnings que devuelve antes de hacer commit.
+
+## Ejecutar desde Cursor
+
+Usa el terminal integrado (`` Ctrl+` `` / `` Cmd+` ``):
+
+```bash
+npx react-doctor
+```
+
+O con reporte detallado:
+```bash
+npx react-doctor --verbose
+```

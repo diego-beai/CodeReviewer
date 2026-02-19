@@ -1,0 +1,184 @@
+# =============================================================================
+# claude-react-toolkit — GitHub Action
+# Revisa automáticamente el código React en cada PR y comenta los hallazgos
+#
+# INSTALACION: Copia este archivo a .github/workflows/claude-review.yml
+# en tu proyecto React.
+#
+# SECRETS necesarios:
+#   - ANTHROPIC_API_KEY: tu clave de API de Anthropic
+#     Añade en: Settings → Secrets and variables → Actions
+# =============================================================================
+
+name: 🔍 Claude React Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '**.tsx'
+      - '**.ts'
+      - '**.jsx'
+      - '**.js'
+
+jobs:
+  react-review:
+    name: React Code Review
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Obtener archivos modificados en el PR
+        id: changed-files
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '\.(tsx?|jsx?)$' | head -20 || true)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "count=$(echo "$FILES" | grep -c . || echo 0)" >> $GITHUB_OUTPUT
+
+      - name: Descargar reglas de Vercel
+        id: vercel-rules
+        run: |
+          # Descargar reglas actualizadas de vercel-labs/agent-skills
+          curl -s "https://raw.githubusercontent.com/vercel-labs/agent-skills/main/skills/react-best-practices/SKILL.md" > /tmp/vercel-react-rules.md || echo "# Fallback: no se pudo descargar" > /tmp/vercel-react-rules.md
+          curl -s "https://raw.githubusercontent.com/vercel-labs/agent-skills/main/skills/composition-patterns/SKILL.md" > /tmp/vercel-composition-rules.md || echo "" > /tmp/vercel-composition-rules.md
+
+      - name: Leer archivos modificados
+        id: read-files
+        if: steps.changed-files.outputs.count != '0'
+        run: |
+          FILES="${{ steps.changed-files.outputs.files }}"
+          CONTENT=""
+          while IFS= read -r file; do
+            if [[ -f "$file" ]]; then
+              CONTENT+="### File: $file\n\`\`\`typescript\n$(cat "$file")\n\`\`\`\n\n"
+            fi
+          done <<< "$FILES"
+
+          # Guardar en archivo temporal para evitar problemas con variables largas
+          printf '%s' "$CONTENT" > /tmp/files-content.txt
+
+      - name: Ejecutar Vercel React Review con Claude
+        id: claude-review
+        if: steps.changed-files.outputs.count != '0'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          RULES=$(cat /tmp/vercel-react-rules.md /tmp/vercel-composition-rules.md)
+          FILES_CONTENT=$(cat /tmp/files-content.txt)
+
+          PROMPT="You are a React code reviewer. Analyze the following files against these Vercel React best practices rules.
+
+          ## Rules to apply:
+          $RULES
+
+          ## Files to review:
+          $FILES_CONTENT
+
+          ## Output format:
+          Respond with a markdown report for a GitHub PR comment. Include:
+          1. A summary section with emoji indicators (✅ good, ⚠️ warning, 🚨 critical)
+          2. A findings table: | File | Line | Rule | Severity | Problem | Fix |
+          3. A 'Next Steps' section with prioritized fixes
+
+          If no violations found, say so briefly and encourage the developer.
+          Keep the tone constructive and helpful."
+
+          REVIEW=$(echo "$PROMPT" | claude --no-header -p 2>/dev/null || echo "No se pudo ejecutar la revision")
+          echo "review<<EOF" >> $GITHUB_OUTPUT
+          echo "$REVIEW" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Ejecutar React Doctor
+        id: react-doctor
+        if: steps.changed-files.outputs.count != '0'
+        run: |
+          DOCTOR_OUTPUT=$(npx react-doctor 2>/dev/null | tail -20 || echo "react-doctor no disponible en este proyecto")
+          echo "output<<EOF" >> $GITHUB_OUTPUT
+          echo "$DOCTOR_OUTPUT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Comentar en el PR
+        if: steps.changed-files.outputs.count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const files = `${{ steps.changed-files.outputs.files }}`.trim().split('\n').filter(Boolean);
+            const review = `${{ steps.claude-review.outputs.review }}`;
+            const doctor = `${{ steps.react-doctor.outputs.output }}`;
+
+            const body = `## 🔍 Claude React Review
+
+            > Revisión automática de ${files.length} archivo(s) modificado(s) en este PR.
+
+            ---
+
+            ### Vercel React Review
+
+            ${review}
+
+            ---
+
+            ### React Doctor Score
+
+            \`\`\`
+            ${doctor}
+            \`\`\`
+
+            ---
+
+            <details>
+            <summary>📋 Archivos analizados</summary>
+
+            ${files.map(f => `- \`${f}\``).join('\n')}
+
+            </details>
+
+            <sub>🤖 Generado por [claude-react-toolkit](https://github.com/) • [Reglas Vercel](https://github.com/vercel-labs/agent-skills)</sub>`;
+
+            // Buscar si ya existe un comentario anterior del bot para actualizarlo
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Claude React Review')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Sin archivos React en el PR
+        if: steps.changed-files.outputs.count == '0'
+        run: echo "✓ No hay archivos React modificados en este PR. Saltando revisión."
