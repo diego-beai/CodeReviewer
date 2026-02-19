@@ -148,8 +148,9 @@ check_prereqs() {
 
   if command -v npx &>/dev/null; then
     print_ok "Node.js / npx $(node --version 2>/dev/null || echo '')"
+    print_info "React Doctor usara npx para el analisis"
   else
-    print_warn "npx no encontrado — react-doctor no funcionara"
+    print_warn "npx no encontrado — React Doctor no funcionara"
   fi
 
   if command -v python3 &>/dev/null; then
@@ -221,10 +222,10 @@ run_wizard() {
   esac
 
   echo ""
-  if ask_yn "¿Bloquear también si el score de React Doctor cae por debajo de un umbral?" "s"; then
+  if ask_yn "¿Bloquear también si el health score del código cae por debajo de un umbral?" "n"; then
     CFG_BLOCK_SCORE="true"
 
-    ask_menu "¿Cual es el score minimo aceptable?" "2" \
+    ask_menu "¿Cual es el health score minimo aceptable?" "2" \
       "40 — Solo bloquear en casos muy graves" \
         "Proyectos legacy o con mucha deuda tecnica." \
       "50 — Umbral equilibrado" \
@@ -291,11 +292,6 @@ run_wizard() {
   if ask_yn "  Activar" "s"; then CFG_VERCEL="true"; else CFG_VERCEL="false"; fi
   echo ""
 
-  echo -e "  ${BOLD}¿Activar React Doctor score?${RESET}"
-  echo -e "  ${DIM}Score 0-100 de salud general del proyecto (npx react-doctor)${RESET}"
-  echo ""
-  if ask_yn "  Activar" "s"; then CFG_DOCTOR="true"; else CFG_DOCTOR="false"; fi
-
   # ── Editores ─────────────────────────────────────────────────────────────────
   print_section "Configuracion — ¿En qué editores instalarlo?"
 
@@ -360,8 +356,9 @@ show_config_summary() {
   # Herramientas
   local tools=()
   [[ "$CFG_VERCEL" == "true" ]] && tools+=("Vercel React Review")
-  [[ "$CFG_DOCTOR" == "true" ]] && tools+=("React Doctor")
+  [[ "${CFG_DOCTOR:-true}" == "true" ]] && tools+=("React Doctor")
   echo -e "  ${CYAN}Herramientas:${RESET}     ${tools[*]:-Ninguna}"
+  echo -e "  ${CYAN}Fixes via:${RESET}        tu editor AI (Claude Code / Cursor / Codex)"
 
   # Editores
   local editors=()
@@ -393,8 +390,8 @@ save_config() {
   "blocking": {
     "on_critical": $([ "$CFG_BLOCK_CRITICAL" == "block" ] && echo "true" || echo "false"),
     "on_critical_action": "$CFG_BLOCK_CRITICAL",
-    "on_low_doctor_score": $CFG_BLOCK_SCORE,
-    "doctor_score_threshold": $CFG_SCORE_THRESHOLD
+    "on_low_health_score": $CFG_BLOCK_SCORE,
+    "health_score_threshold": $CFG_SCORE_THRESHOLD
   },
   "reporting": {
     "level": "$CFG_REPORT_LEVEL",
@@ -407,7 +404,7 @@ save_config() {
   },
   "tools": {
     "vercel_review": $CFG_VERCEL,
-    "react_doctor": $CFG_DOCTOR
+    "react_doctor": true
   },
   "editors": {
     "claude_code": $CFG_CLAUDE,
@@ -541,9 +538,8 @@ install_npm_scripts() {
 const fs = require('fs');
 const pkg = JSON.parse(fs.readFileSync('$pkg', 'utf8'));
 pkg.scripts = pkg.scripts || {};
-pkg.scripts['review']         = 'bash \"${TOOLKIT_DIR}/scripts/run-review.sh\" all';
+pkg.scripts['review']         = 'bash \"${TOOLKIT_DIR}/scripts/run-review.sh\"';
 pkg.scripts['review:vercel']  = 'bash \"${TOOLKIT_DIR}/scripts/run-review.sh\" vercel';
-pkg.scripts['review:doctor']  = 'bash \"${TOOLKIT_DIR}/scripts/run-review.sh\" doctor';
 pkg.scripts['review:config']  = 'bash \"${TOOLKIT_DIR}/install.sh\" --update-config';
 fs.writeFileSync('$pkg', JSON.stringify(pkg, null, 2) + '\n');
 " 2>/dev/null && \
@@ -599,7 +595,6 @@ set_quick_defaults() {
   CFG_REPORT_LEVEL="critical_high"
   CFG_ASK_FIX="ask"
   CFG_VERCEL="true"
-  CFG_DOCTOR="true"
   CFG_CLAUDE="true"
   CFG_CURSOR="false"
   CFG_CODEX="false"
@@ -620,7 +615,6 @@ load_existing_config() {
   CFG_REPORT_LEVEL=$(python3 -c "import json,sys; d=json.load(open('$cfg')); print(d.get('reporting',{}).get('level','critical_high'))" 2>/dev/null || echo "critical_high")
   CFG_ASK_FIX=$(python3 -c "import json,sys; d=json.load(open('$cfg')); print(d.get('auto_fix',{}).get('mode','ask'))" 2>/dev/null || echo "ask")
   CFG_VERCEL=$(python3 -c "import json,sys; d=json.load(open('$cfg')); print(str(d.get('tools',{}).get('vercel_review',True)).lower())" 2>/dev/null || echo "true")
-  CFG_DOCTOR=$(python3 -c "import json,sys; d=json.load(open('$cfg')); print(str(d.get('tools',{}).get('react_doctor',True)).lower())" 2>/dev/null || echo "true")
   CFG_CLAUDE=$(python3 -c "import json,sys; d=json.load(open('$cfg')); print(str(d.get('editors',{}).get('claude_code',True)).lower())" 2>/dev/null || echo "true")
   CFG_CURSOR=$(python3 -c "import json,sys; d=json.load(open('$cfg')); print(str(d.get('editors',{}).get('cursor',False)).lower())" 2>/dev/null || echo "false")
   CFG_CODEX=$(python3 -c "import json,sys; d=json.load(open('$cfg')); print(str(d.get('editors',{}).get('codex',False)).lower())" 2>/dev/null || echo "false")
@@ -651,9 +645,8 @@ show_final_summary() {
   esac
 
   echo -e "  ${BOLD}Manual (en cualquier momento):${RESET}"
-  echo -e "  ${CYAN}npm run review${RESET}          → Revision completa"
+  echo -e "  ${CYAN}npm run review${RESET}          → Revision completa con Claude"
   echo -e "  ${CYAN}npm run review:vercel${RESET}   → Solo Vercel React Review"
-  echo -e "  ${CYAN}npm run review:doctor${RESET}   → Solo React Doctor"
   echo -e "  ${CYAN}npm run review:config${RESET}   → Reconfigurar preferencias"
   echo ""
 

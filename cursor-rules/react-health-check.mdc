@@ -1,0 +1,102 @@
+---
+description: Evalua la salud general del codigo React al editar componentes o hooks. Detecta problemas de estructura, hooks incorrectos, estado redundante y prop drilling.
+globs:
+  - "**/*.tsx"
+  - "**/*.ts"
+  - "**/*.jsx"
+alwaysApply: false
+---
+
+# React Health Check — Cursor Rule
+
+Al editar archivos React/TypeScript, evalua continuamente estos indicadores de salud del código. No esperes a que el usuario lo pida — sugiere mejoras mientras editas.
+
+## Indicadores a vigilar
+
+### Hooks — Reglas fundamentales
+- Los hooks NUNCA pueden estar dentro de condicionales, loops o funciones anidadas
+- El orden de los hooks debe ser siempre el mismo entre renders
+- Nunca llamar hooks dentro de callbacks o event handlers
+
+```tsx
+// MAL — hook condicional
+if (isLoggedIn) {
+  const [data, setData] = useState(null) // ← ilegal
+}
+
+// BIEN
+const [data, setData] = useState(null)
+if (!isLoggedIn) return null
+```
+
+### Estado — Minimalismo
+- El estado debe ser mínimo. Si un valor se puede calcular a partir de otros, no lo almacenes.
+- Evita estado redundante o duplicado
+- Prefiere estado colocado lo más bajo posible en el árbol
+
+```tsx
+// MAL — estado redundante
+const [items, setItems] = useState([])
+const [itemCount, setItemCount] = useState(0) // redundante
+
+// BIEN
+const [items, setItems] = useState([])
+const itemCount = items.length // derivado
+```
+
+### useEffect — Dependencias correctas
+- Todas las variables usadas dentro de useEffect deben estar en el array de dependencias
+- Si useEffect solo sirve para calcular un valor derivado, elimínalo
+- Evita efectos que solo llaman a setState con un valor transformado de las props
+
+```tsx
+// MAL — dependencia faltante
+useEffect(() => {
+  setFullName(`${firstName} ${lastName}`) // firstName y lastName en deps
+}, []) // ← array vacío incorrecto
+
+// BIEN
+const fullName = `${firstName} ${lastName}` // sin efecto
+```
+
+### TypeScript — Seguridad de tipos
+- No usar `any` — si no conoces el tipo usa `unknown` y haz narrowing
+- Las funciones asíncronas deben tener tipo de retorno explícito
+- Evitar `as X` excepto cuando sea estrictamente necesario con justificación
+
+```tsx
+// MAL
+const getData = async (): any => { ... }
+const user = response.data as User // sin verificar
+
+// BIEN
+const getData = async (): Promise<User[]> => { ... }
+const user = isUser(response.data) ? response.data : null
+```
+
+### Componentes — Tamaño y responsabilidad
+- Un componente con más de 80 líneas probablemente hace demasiado
+- Si un componente acepta más de 5 props, considera dividirlo
+- Cada componente debe tener una responsabilidad clara y única
+
+### Prop drilling
+- Si pasas las mismas props a través de 3+ niveles de componentes, usa Context o Zustand
+- Señal de alerta: componente intermedio que recibe props solo para pasarlas
+
+## Cómo reportar en Cursor
+
+Cuando detectes alguno de estos problemas, añade un comentario inline al código:
+
+```tsx
+// ⚠️ HEALTH: hook condicional — mover useState fuera del if
+// ⚠️ HEALTH: estado redundante — itemCount se puede derivar de items.length
+// ⚠️ HEALTH: dependencia faltante en useEffect — añadir userId al array
+// ⚠️ HEALTH: componente con 3 niveles de prop drilling — considera Context
+```
+
+Y propone el fix en el siguiente bloque de código.
+
+## Score de referencia
+
+Al finalizar una sesión de edición, puedes pedir a Cursor que evalúe:
+*"Evalúa la salud de este componente del 0 al 100 según las reglas de CodeReviewer"*

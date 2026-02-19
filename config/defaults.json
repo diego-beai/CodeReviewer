@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "trigger": "pre-commit",
   "blocking": {
-    "on_critical": true,
+    "on_critical_action": "block",
     "on_low_doctor_score": true,
     "doctor_score_threshold": 50
   },
@@ -13,7 +13,7 @@
     "report_dir": ".claude-review"
   },
   "auto_fix": {
-    "ask_before_fixing": true,
+    "mode": "ask",
     "only_high_confidence": true
   },
   "tools": {

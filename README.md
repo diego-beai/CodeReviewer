@@ -2,7 +2,7 @@
 
 > Revisión automática de código React con IA, integrada en tu flujo de git.
 
-Combina las **57 reglas de producción de Vercel** ([agent-skills](https://github.com/vercel-labs/agent-skills)) con el score de salud de **React Doctor**, directamente en tu terminal — antes de cada commit, antes de cada push, o cuando tú decidas.
+Aplica las **57 reglas de producción de Vercel** ([agent-skills](https://github.com/vercel-labs/agent-skills)) y un **health score propio** directamente desde tu editor — Claude Code, Cursor o Codex — sin depender de herramientas externas.
 
 Compatible con **Claude Code**, **Cursor** y **Codex CLI**.
 
@@ -14,7 +14,7 @@ Cuando haces un commit (o un push, o lo que configures), el toolkit:
 
 1. Detecta los archivos `.tsx`/`.ts` modificados
 2. Los envía a Claude con las reglas de Vercel para detectar violaciones
-3. Corre `react-doctor` y obtiene el score de salud
+3. Claude evalúa también un health score (0-100) del código analizado
 4. Actúa según tu configuración: bloquea, avisa, o pregunta
 
 ```
@@ -31,8 +31,9 @@ git commit -m "feat: nueva pantalla de usuario"
         Problema: fetchUser y fetchPosts se ejecutan secuencialmente
         Fix:      Envolver en Promise.all([fetchUser(id), fetchPosts(id)])
 
-  [2/2] React Doctor
-      ⚠ Score bajo: 64/100 (umbral: 50)
+  Health: 64/100
+    → Missing dependency in useEffect at UserList.tsx:88
+    → Prop drilling 4 levels deep for currentUser
 
 ┌──────────────────────────────────────────────────┐
 │  Resultado: BLOQUEADO — Corrige los CRITICALs   │
@@ -124,9 +125,8 @@ Configura el umbral de score (0-100) por debajo del cual se bloquea el commit. P
 Una vez instalado, puedes lanzar la revisión en cualquier momento:
 
 ```bash
-npm run review           # Vercel Review + React Doctor (completo)
+npm run review           # Revisión completa con Claude (reglas + health score)
 npm run review:vercel    # Solo las 57 reglas de Vercel
-npm run review:doctor    # Solo el score de React Doctor
 npm run review:config    # Abrir el wizard para reconfigurar
 ```
 
@@ -248,7 +248,6 @@ Para las 57 reglas completas → [vercel-labs/agent-skills/react-best-practices]
 | Herramienta | Para qué | Instalar |
 |---|---|---|
 | [Claude Code CLI](https://claude.ai/code) | Análisis con IA, auto-fix | `npm install -g @anthropic-ai/claude-code` |
-| Node.js 18+ | React Doctor | [nodejs.org](https://nodejs.org) |
 | Python 3 | Parsear resultados en hooks | Preinstalado en macOS/Linux |
 
 ---
