@@ -31,6 +31,18 @@ CLAUDE_DIR="$HOME/.claude"
 MODE="${1:---interactive}"
 CONFIG_FILE=".claude-toolkit.config.json"
 
+# Detectar el PROJECT_ROOT correctamente aunque el toolkit sea un subdirectorio
+# Caso 1: toolkit es un git submodule → usar el superproyecto
+PROJECT_ROOT=$(git -C "$TOOLKIT_DIR" rev-parse --show-superproject-working-tree 2>/dev/null || echo "")
+# Caso 2: toolkit es un subdirectorio normal → usar el directorio padre
+if [[ -z "$PROJECT_ROOT" ]]; then
+  PROJECT_ROOT="$(dirname "$TOOLKIT_DIR")"
+fi
+# Si el usuario ejecuta el script desde el proyecto raiz directamente, mantenerlo
+if [[ "$TOOLKIT_DIR" == "$PROJECT_ROOT" ]]; then
+  PROJECT_ROOT="$(pwd)"
+fi
+
 # Valores de configuracion (se rellenan en el wizard)
 CFG_TRIGGER=""
 CFG_BLOCK_CRITICAL=""
@@ -194,7 +206,7 @@ run_wizard() {
       "Revisa todos los cambios desde el ultimo push. Menos interrupciones." \
     "En ambos momentos (commit y push)" \
       "Maxima cobertura. El push revisa todo, el commit revisa lo inmediato." \
-    "Solo manualmente (npm run review)" \
+    "Solo manualmente (invoca el skill en Claude Code)" \
       "Tu decides cuando revisar. Sin automatismo en git."
 
   case "$REPLY" in
@@ -379,7 +391,7 @@ show_config_summary() {
 # ─── Guardar configuracion en JSON ────────────────────────────────────────────
 save_config() {
   local project_root
-  project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+  project_root="$PROJECT_ROOT"
 
   cat > "$project_root/$CONFIG_FILE" << EOF
 {
@@ -441,7 +453,7 @@ install_cursor_rules() {
   if [[ "$CFG_CURSOR" != "true" ]]; then return 0; fi
 
   local project_root
-  project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+  project_root="$PROJECT_ROOT"
   local cursor_dir="$project_root/.cursor/rules"
 
   print_info "Instalando reglas en Cursor..."
@@ -455,7 +467,7 @@ install_codex_agents() {
   if [[ "$CFG_CODEX" != "true" ]]; then return 0; fi
 
   local project_root
-  project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+  project_root="$PROJECT_ROOT"
   local dest="$project_root/AGENTS.md"
 
   print_info "Instalando AGENTS.md para Codex CLI..."
@@ -477,14 +489,18 @@ install_git_hooks() {
     return 0
   fi
 
-  if ! git rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
+  if ! git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
     print_warn "No es un repositorio git. Git hooks no instalados."
     return 0
   fi
 
-  local project_root
-  project_root=$(git rev-parse --show-toplevel)
-  local hooks_dir="$project_root/.git/hooks"
+  local project_root="$PROJECT_ROOT"
+  # Obtener el directorio .git real (maneja submodulos donde .git es un fichero)
+  local git_dir
+  git_dir=$(git -C "$project_root" rev-parse --git-dir 2>/dev/null || echo "$project_root/.git")
+  # Si git_dir es relativo, hacerlo absoluto
+  [[ "$git_dir" != /* ]] && git_dir="$project_root/$git_dir"
+  local hooks_dir="$git_dir/hooks"
   local runner="$TOOLKIT_DIR/hooks/lib/runner.sh"
   local config_path="$project_root/$CONFIG_FILE"
 
@@ -525,27 +541,6 @@ HOOKEOF
   esac
 }
 
-# ─── Instalar scripts npm ─────────────────────────────────────────────────────
-install_npm_scripts() {
-  local project_root
-  project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
-  local pkg="$project_root/package.json"
-
-  [[ ! -f "$pkg" ]] && { print_warn "package.json no encontrado. Scripts npm no configurados."; return 0; }
-  grep -q "review:vercel" "$pkg" 2>/dev/null && { print_info "Scripts npm ya existen (omitiendo)"; return 0; }
-
-  node -e "
-const fs = require('fs');
-const pkg = JSON.parse(fs.readFileSync('$pkg', 'utf8'));
-pkg.scripts = pkg.scripts || {};
-pkg.scripts['review']         = 'bash \"${TOOLKIT_DIR}/scripts/run-review.sh\"';
-pkg.scripts['review:vercel']  = 'bash \"${TOOLKIT_DIR}/scripts/run-review.sh\" vercel';
-pkg.scripts['review:config']  = 'bash \"${TOOLKIT_DIR}/install.sh\" --update-config';
-fs.writeFileSync('$pkg', JSON.stringify(pkg, null, 2) + '\n');
-" 2>/dev/null && \
-    print_ok "Scripts npm agregados al package.json" || \
-    print_warn "No se pudieron agregar scripts npm"
-}
 
 # ─── Desinstalacion ───────────────────────────────────────────────────────────
 uninstall() {
@@ -561,10 +556,12 @@ uninstall() {
     print_ok "code-reviewer.md restaurado"
 
   # Git hooks
-  local project_root
-  project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+  local project_root="$PROJECT_ROOT"
+  local _git_dir
+  _git_dir=$(git -C "$project_root" rev-parse --git-dir 2>/dev/null || echo "$project_root/.git")
+  [[ "$_git_dir" != /* ]] && _git_dir="$project_root/$_git_dir"
   for hook in pre-commit pre-push; do
-    local hook_file="$project_root/.git/hooks/$hook"
+    local hook_file="$_git_dir/hooks/$hook"
     if [[ -f "$hook_file" ]] && grep -q "CodeReviewer" "$hook_file" 2>/dev/null; then
       # Eliminar solo las lineas del toolkit, no el hook completo
       local tmp
@@ -603,7 +600,7 @@ set_quick_defaults() {
 # ─── Cargar config existente ──────────────────────────────────────────────────
 load_existing_config() {
   local project_root
-  project_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+  project_root="$PROJECT_ROOT"
   local cfg="$project_root/$CONFIG_FILE"
 
   [[ ! -f "$cfg" ]] && return 1
@@ -644,15 +641,11 @@ show_final_summary() {
       ;;
   esac
 
-  echo -e "  ${BOLD}Manual (en cualquier momento):${RESET}"
-  echo -e "  ${CYAN}npm run review${RESET}          → Revision completa con Claude"
-  echo -e "  ${CYAN}npm run review:vercel${RESET}   → Solo Vercel React Review"
-  echo -e "  ${CYAN}npm run review:config${RESET}   → Reconfigurar preferencias"
-  echo ""
-
   if [[ "$CFG_CLAUDE" == "true" ]]; then
-    echo -e "  ${BOLD}En Claude Code:${RESET}"
-    echo -e "  ${CYAN}/vercel-react-review${RESET}    → Revision interactiva con fixes"
+    echo -e "  ${BOLD}Revision profunda (en Claude Code):${RESET}"
+    echo -e "  ${CYAN}/vercel-react-review${RESET}    → Patrones React de Vercel con fixes"
+    echo -e "  ${CYAN}/react-doctor${RESET}           → Health score 0-100 del proyecto"
+    echo -e "  ${DIM}code-reviewer agent     → Revision completa (invoca ambos)${RESET}"
     echo ""
   fi
 
@@ -717,6 +710,5 @@ install_claude_skills
 install_cursor_rules
 install_codex_agents
 install_git_hooks
-install_npm_scripts
 
 show_final_summary

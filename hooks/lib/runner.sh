@@ -134,7 +134,20 @@ if [[ "$USE_DOCTOR" == "true" ]]; then
   if ! command -v npx &>/dev/null; then
     echo -e "  ${YELLOW}  ⚠ npx no disponible${RESET}"
   else
-    DOCTOR_RAW=$(npx react-doctor 2>/dev/null || echo "")
+    local _cmd
+    if command -v react-doctor &>/dev/null; then
+      _cmd="react-doctor"
+    else
+      _cmd="npx --yes react-doctor"
+    fi
+    # Timeout portable (macOS no tiene GNU timeout)
+    # 10s: suficiente para el scan (~1-2s), mata el prompt interactivo final
+    _run_timeout() {
+      local t=$1; shift; "$@" &
+      local p=$!; ( sleep "$t" && kill "$p" 2>/dev/null ) &
+      local k=$!; wait "$p" 2>/dev/null; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null
+    }
+    DOCTOR_RAW=$(_run_timeout 10 bash -c "$_cmd -y 2>&1" || true)
 
     if [[ -n "$DOCTOR_RAW" ]]; then
       DOCTOR_SCORE=$(echo "$DOCTOR_RAW" | python3 -c "
