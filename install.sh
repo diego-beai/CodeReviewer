@@ -446,6 +446,28 @@ install_claude_skills() {
     cp "$TOOLKIT_DIR/agents/code-reviewer.md" "$CLAUDE_DIR/agents/code-reviewer.md"
     print_ok "Agent 'code-reviewer' actualizado con analisis React"
   fi
+
+  # Agregar instruccion de revision automatica al CLAUDE.md global
+  local claude_md="$CLAUDE_DIR/CLAUDE.md"
+  if [[ -f "$claude_md" ]] && grep -q "Revision de codigo antes de commit" "$claude_md" 2>/dev/null; then
+    print_info "Instruccion de revision pre-commit ya existe en CLAUDE.md (omitiendo)"
+  else
+    cat >> "$claude_md" << 'CLAUDEMD'
+
+## Revision de codigo antes de commit
+
+Cuando el usuario pida hacer un `git commit` en un proyecto React/TypeScript (archivos .tsx, .ts, .jsx):
+
+1. **Ejecutar `/react-doctor`** — obtener el health score 0-100 y los warnings principales
+2. **Ejecutar `/vercel-react-review`** — revisar los archivos modificados contra las reglas de Vercel (async-parallel, barrel imports, re-renders, composicion)
+3. **Reportar los hallazgos** al usuario de forma resumida
+4. **Si hay issues CRITICAL** → no hacer el commit, explicar que hay que corregirlos primero (salvo que el usuario lo apruebe explicitamente)
+5. **Si todo OK o solo warnings** → proceder con el commit
+
+Esto aplica a cualquier proyecto React. No hace falta que el usuario lo pida, es comportamiento automatico al hacer commits.
+CLAUDEMD
+    print_ok "Instruccion de revision pre-commit agregada a ~/.claude/CLAUDE.md"
+  fi
 }
 
 # ─── Instalar reglas para Cursor ──────────────────────────────────────────────
@@ -554,6 +576,24 @@ uninstall() {
   [[ -f "$CLAUDE_DIR/agents/code-reviewer.md.bak" ]] && \
     mv "$CLAUDE_DIR/agents/code-reviewer.md.bak" "$CLAUDE_DIR/agents/code-reviewer.md" && \
     print_ok "code-reviewer.md restaurado"
+
+  # Limpiar instruccion de CLAUDE.md global
+  local claude_md="$CLAUDE_DIR/CLAUDE.md"
+  if [[ -f "$claude_md" ]] && grep -q "Revision de codigo antes de commit" "$claude_md" 2>/dev/null; then
+    local tmp
+    tmp=$(mktemp)
+    python3 -c "
+import sys
+content = open('$claude_md').read()
+marker = '\n## Revision de codigo antes de commit'
+idx = content.find(marker)
+if idx != -1:
+    next_section = content.find('\n## ', idx + 1)
+    content = content[:idx] + (content[next_section:] if next_section != -1 else '')
+print(content, end='')
+" > "$tmp" && mv "$tmp" "$claude_md"
+    print_ok "Instruccion de revision pre-commit eliminada de CLAUDE.md"
+  fi
 
   # Git hooks
   local project_root="$PROJECT_ROOT"

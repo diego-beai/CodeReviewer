@@ -7,19 +7,23 @@ Toolkit de revision de codigo React para equipos. Deteccion gratuita en cada com
 ## Arquitectura
 
 ```
-git commit
+Tu dices "haz un commit" en Claude Code
+    │
+    ├── El mismo agente ejecuta automaticamente:
+    │       /react-doctor          → health score 0-100
+    │       /vercel-react-review   → 57 reglas Vercel sobre archivos modificados
+    │
+    ├── Si hay CRITICAL → no commitea, te explica que corregir
+    └── Si todo OK      → hace el commit
+
+git commit (linea de comandos o CI):
     ├── [1] Deteccion estatica (grep, 0 tokens, instantaneo)
     │         async-parallel · barrel-imports
     └── [2] React Doctor (npx, 0 tokens, ~5s)
               score 0-100 · warnings detallados
-
-En Claude Code (cuando el desarrollador decide):
-    /vercel-react-review   → 57 reglas Vercel: async-parallel, barrel imports, re-renders
-    /react-doctor          → health score 0-100 del proyecto
-    code-reviewer agent    → revision completa (invoca ambos + seguridad/calidad)
 ```
 
-**Principio clave**: el hook nunca llama a la API de Claude. Los tokens se usan solo cuando el desarrollador decide hacer la revision completa.
+**Principio clave**: el hook nunca llama a la API de Claude. La revision profunda la hace el mismo agente Claude Code con el que hablas, automaticamente antes de cada commit.
 
 ---
 
@@ -67,25 +71,27 @@ bash .claude-toolkit/install.sh --uninstall        # Eliminar todo
 
 ## Uso diario
 
-### Automatico (git hook, gratis)
+### Con Claude Code (flujo recomendado)
 
-Al hacer `git commit` o `git push` (segun configuracion), el hook corre automaticamente:
-- Deteccion estatica de patrones CRITICAL
+Simplemente dile a Claude Code que haga un commit. El hace la revision solo:
+
+```
+"haz un commit con los cambios de hoy"
+```
+
+Claude Code ejecutara automaticamente `/react-doctor` y `/vercel-react-review` sobre
+los archivos modificados, te reportara los hallazgos, y solo commitea si todo esta bien.
+
+Esto funciona porque `~/.claude/CLAUDE.md` incluye la instruccion global de revisar
+antes de cada commit en proyectos React. El `install.sh` la agrega automaticamente.
+
+### Desde linea de comandos o CI (git hook, gratis)
+
+Al hacer `git commit` o `git push`, el hook corre sin tokens:
+- Deteccion estatica de patrones CRITICAL (grep)
 - React Doctor con score 0-100
 
 Si hay problemas, bloquea el commit (o avisa, segun configuracion).
-
-### Revision profunda (Claude Code)
-
-```
-/vercel-react-review   → Patrones React de Vercel con fixes interactivos
-/react-doctor          → Health score 0-100 del proyecto
-```
-
-O usa el agente para revision completa:
-```
-Usa el agente code-reviewer en el proyecto
-```
 
 ---
 
