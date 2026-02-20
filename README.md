@@ -10,6 +10,9 @@ Toolkit de revision de codigo React para equipos. Deteccion gratuita en cada com
 Tu dices "haz un commit" en Claude Code
     │
     ├── El mismo agente ejecuta automaticamente:
+    │       tsc --noEmit           → errores de tipos que Vite ignora
+    │       madge --circular       → dependencias circulares
+    │       knip                   → exports/archivos/deps sin usar
     │       /react-doctor          → health score 0-100
     │       /vercel-react-review   → 57 reglas Vercel sobre archivos modificados
     │
@@ -19,7 +22,9 @@ Tu dices "haz un commit" en Claude Code
 git commit (linea de comandos o CI):
     ├── [1] Deteccion estatica (grep, 0 tokens, instantaneo)
     │         async-parallel · barrel-imports
-    └── [2] React Doctor (npx, 0 tokens, ~5s)
+    ├── [2] Dependencias circulares (madge, 0 tokens, ~3s)
+    ├── [3] Codigo muerto (knip, 0 tokens, ~5s)
+    └── [4] React Doctor (npx, 0 tokens, ~5s)
               score 0-100 · warnings detallados
 ```
 
