@@ -74,7 +74,7 @@ if [[ -z "$FILES" ]]; then
   exit 0
 fi
 
-FILE_COUNT=$(echo "$FILES" | grep -c . || echo 0)
+FILE_COUNT=$(echo "$FILES" | grep -c . 2>/dev/null || true)
 echo -e "${CYAN}  ${FILE_COUNT} archivo(s) React en staging${RESET}"
 echo ""
 
@@ -85,14 +85,15 @@ DOCTOR_ISSUES=""
 
 # ─── [1] Deteccion estatica CRITICAL (sin API, sin tokens) ────────────────────
 # Solo busca los dos patrones CRITICAL mas importantes con grep
-echo -e "${CYAN}${BOLD}  [1/2] Deteccion estatica${RESET}"
+echo -e "${CYAN}${BOLD}  [1/4] Deteccion estatica${RESET}"
 
 while IFS= read -r file; do
   [[ -f "$file" ]] || continue
 
   # async-parallel: dos o mas awaits seguidos en el mismo bloque
   AWAIT_LINES=$(grep -n "^\s*\(const\|let\)\s.*=\s*await\s" "$file" 2>/dev/null || true)
-  if [[ $(echo "$AWAIT_LINES" | grep -c . || echo 0) -ge 2 ]]; then
+  AWAIT_COUNT=$(echo "$AWAIT_LINES" | grep -c . 2>/dev/null || true)
+  if [[ "${AWAIT_COUNT:-0}" -ge 2 ]]; then
     # Verificar que son consecutivos (numeros de linea proximos)
     CONSECUTIVE=$(echo "$AWAIT_LINES" | awk -F: 'prev && $1-prev<=3{found=1} {prev=$1} END{print found+0}')
     if [[ "$CONSECUTIVE" -ge 1 ]]; then
@@ -127,14 +128,49 @@ else
 fi
 echo ""
 
-# ─── [2] React Doctor (sin API, sin tokens) ───────────────────────────────────
+# ─── [2] Dependencias circulares (madge, sin API) ────────────────────────────
+echo -e "${CYAN}${BOLD}  [2/4] Dependencias circulares${RESET}"
+SRC_DIR="src"
+[[ ! -d "$SRC_DIR" ]] && SRC_DIR="frontend/src"
+[[ ! -d "$SRC_DIR" ]] && SRC_DIR="."
+if command -v npx &>/dev/null; then
+  CIRCULAR=$(npx --yes madge --circular --extensions ts,tsx "$SRC_DIR" 2>/dev/null || true)
+  if echo "$CIRCULAR" | grep -q "✖\|Circular"; then
+    FOUND_CRITICAL=true
+    echo -e "  ${RED}  ✗ Dependencias circulares detectadas${RESET}"
+    echo "$CIRCULAR" | grep -v "^$" | head -10 | sed 's/^/    /'
+  else
+    echo -e "  ${GREEN}  ✓ Sin dependencias circulares${RESET}"
+  fi
+else
+  echo -e "  ${YELLOW}  ⚠ npx no disponible${RESET}"
+fi
+echo ""
+
+# ─── [3] Codigo muerto (knip, sin API) ───────────────────────────────────────
+echo -e "${CYAN}${BOLD}  [3/4] Codigo muerto (knip)${RESET}"
+if command -v npx &>/dev/null && [[ -f "package.json" ]]; then
+  KNIP_OUT=$(npx --yes knip --reporter compact --no-progress 2>/dev/null || true)
+  if [[ -n "$KNIP_OUT" ]]; then
+    KNIP_COUNT=$(echo "$KNIP_OUT" | grep -c "." 2>/dev/null || true)
+    echo -e "  ${YELLOW}  ⚠ ${KNIP_COUNT} hallazgo(s) — exports/archivos/deps sin usar${RESET}"
+    echo "$KNIP_OUT" | head -8 | sed 's/^/    /'
+  else
+    echo -e "  ${GREEN}  ✓ Sin codigo muerto detectado${RESET}"
+  fi
+else
+  echo -e "  ${YELLOW}  ⚠ npx o package.json no disponible${RESET}"
+fi
+echo ""
+
+# ─── [4] React Doctor (sin API, sin tokens) ───────────────────────────────────
 if [[ "$USE_DOCTOR" == "true" ]]; then
-  echo -e "${CYAN}${BOLD}  [2/2] React Doctor${RESET}"
+  echo -e "${CYAN}${BOLD}  [4/4] React Doctor${RESET}"
 
   if ! command -v npx &>/dev/null; then
     echo -e "  ${YELLOW}  ⚠ npx no disponible${RESET}"
   else
-    local _cmd
+    _cmd=""
     if command -v react-doctor &>/dev/null; then
       _cmd="react-doctor"
     else
@@ -218,11 +254,11 @@ suggest_fix_command() {
   # Los fixes con AI se hacen bajo demanda, no en cada commit
   case "$FIX_EDITOR" in
     claude)
-      echo -e "  ${DIM}Para aplicar fixes: ${CYAN}npm run review${RESET}${DIM} o ${CYAN}/vercel-react-review${RESET}${DIM} en Claude Code${RESET}" ;;
+      echo -e "  ${DIM}Para aplicar fixes: usa ${CYAN}/vercel-react-review${RESET}${DIM} en Claude Code${RESET}" ;;
     cursor)
       echo -e "  ${DIM}Para aplicar fixes: abre el reporte en Cursor → ${CYAN}${REPORT_FILE}${RESET}" ;;
     codex)
-      echo -e "  ${DIM}Para aplicar fixes: ${CYAN}npm run review${RESET}" ;;
+      echo -e "  ${DIM}Para aplicar fixes: pide a Codex que revise ${CYAN}${REPORT_FILE}${RESET}" ;;
     none)
       echo -e "  ${DIM}Reporte en: ${CYAN}${REPORT_FILE}${RESET}" ;;
   esac
